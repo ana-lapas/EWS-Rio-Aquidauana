@@ -1,17 +1,17 @@
-
 services:
   api:
     build: .
-    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
+      - .:/app
     ports:
       - "8000:8000"
 
   frontend:
     build: .
-    command: ["python", "-m", "streamlit", "run", "app.py", "--server.port", "8501"]
+    command: ["python", "-m", "streamlit", "run", "app.py", "--server.port", "8501", "--server.address", "0.0.0.0", "--server.enableCORS", "false"]
+    volumes:
+      - .:/app
     ports:
       - "8501:8501"
     depends_on:

@@ -1,0 +1,12 @@
+{
+  "global": {
+    "nse": 0.8849,
+    "pbias": 1.16,
+    "rmse": 4.21
+  },
+  "seasonal": {
+    "Cheia": {"nse": 0.85, "nselog": 0.89},
+    "Vazante": {"nse": 0.78, "nselog": 0.82},
+    "Seca": {"nse": 0.91, "nselog": 0.93}
+  }
+}

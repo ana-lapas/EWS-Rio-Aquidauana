@@ -1,0 +1,10 @@
+Estacao,Falhas_antes,Preenchidas_regressao,Preenchidas_media,Metodo,Preditora
+Precipitacao_1954002,383,383,0,regressao,"Precipitacao_2055003, Precipitacao_2055002, Precipitacao_2054009"
+Precipitacao_2054019,102,102,0,regressao,"Precipitacao_2054009, Precipitacao_2054005, Precipitacao_2055003"
+Vazao_66926000,0,0,0,completo,
+Precipitacao_2054005,222,222,0,regressao,"Precipitacao_2054009, Precipitacao_2055003, Precipitacao_2055002"
+Precipitacao_2054009,276,276,0,regressao,"Precipitacao_2054005, Precipitacao_2055003, Precipitacao_2055002"
+Precipitacao_2055003,1457,1457,0,regressao,"Precipitacao_2055002, Precipitacao_2054009, Precipitacao_2054005"
+Vazao_66941000,0,0,0,completo,
+Precipitacao_2055002,251,251,0,regressao,"Precipitacao_2055003, Precipitacao_2054009, Precipitacao_1954002"
+Vazao_66945000,0,0,0,completo,

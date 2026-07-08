@@ -1,6 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 from app.etl_pipeline import DataPipeline
@@ -27,35 +26,46 @@ def last_update():
     return {"last_data_point": "2026-07-03"}
 
 @app.post("/predict", summary="Prever vazões futuras")
-def predict(request: PredictionRequest):
-    try:
-        # 1. Validação e Cache
-        cache_key = f"{request.start_date}_{request.days}"
-        if cache_key in cache:
-            return {"source": "cache", "data": cache[cache_key]}
+def predict(self, input_sequence, horizon=30):
+    if horizonte is not None:
+        horizon = horizonte
+    # 🔽 Configuração centralizada – igual à usada no Streamlit
+    config = {
+        "drive_path": "data/raw",
+        "output_dir": "data/processed",
+        "output_file": "final_dataset_ANA_regressao.csv",
+        "diagnostic_file": "preenchimento_diagnostico.csv",
+        "scaler_file": "data/scaler.pkl",
+        "start_date": "1994-02-01",
+        "end_date": "2024-01-31",
+        "max_missing_pct": 15.0,
+        "min_common_pairs": 30,
+        "train_frac": 0.70,
+        "stations": [
+            {"file": "1954002_Chuvas.csv", "name": "Precipitacao_1954002", "type": "Chuva"},
+            {"file": "2054019_Chuvas.csv", "name": "Precipitacao_2054019", "type": "Chuva"},
+            {"file": "66926000_Vazoes.csv", "name": "Vazao_66926000", "type": "Vazao"},
+            {"file": "2054005_Chuvas.csv", "name": "Precipitacao_2054005", "type": "Chuva"},
+            {"file": "2054009_Chuvas.csv", "name": "Precipitacao_2054009", "type": "Chuva"},
+            {"file": "2055003_Chuvas.csv", "name": "Precipitacao_2055003", "type": "Chuva"},
+            {"file": "66941000_Vazoes.csv", "name": "Vazao_66941000", "type": "Vazao"},
+            {"file": "2055002_Chuvas.csv", "name": "Precipitacao_2055002", "type": "Chuva"},
+            {"file": "66945000_Vazoes.csv", "name": "Vazao_66945000", "type": "Vazao"}
+        ],
+        "desired_order": [
+            "Precipitacao_1954002", "Precipitacao_2054019", "Vazao_66926000",
+            "Precipitacao_2054005", "Precipitacao_2054009", "Precipitacao_2055003",
+            "Vazao_66941000", "Precipitacao_2055002", "Vazao_66945000"
+        ]
+    }
 
-        # 2. Pipeline (Simulando carregamento de novos dados da ANA)
-        # Em produção: aqui você chamaria a função que busca dados na API HidroWeb
-        # e passa pelo DataPipeline.process_new_data()
-        
-        # 3. Inferência (Instanciando e executando)
-        inference = ModelInference(model_path="models/best_model.keras")
-        # Simulação de dados de entrada processados
-        dummy_input = np.random.rand(1, 30, 9) 
-        
-        preds = inference.predict_30_days(dummy_input)
-        metrics = inference.get_q_metrics(preds)
-        
-        # 4. Formatação de saída
-        result = {
-            "previsoes": [float(p) for p in preds.flatten()],
-            "metricas": metrics,
-            "incerteza_std": float(np.std(preds)),
-            "aviso": "Valores representam estimativas baseadas em LSTM com correção de Duan."
-        }
-        
-        cache[cache_key] = result
-        return {"source": "model", "data": result}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro no processamento: {str(e)}")
+    pipeline = DataPipeline(config=config)
+    df = pipeline.get_latest_data()
+    input_seq = pipeline.prepare_input_sequence(df, n_steps=30)
+    model = ModelInference(
+        model_path="models/modelo_lstm.keras",
+        scaler_path=config["scaler_file"]
+    )
+    preds = model.predict(input_seq, horizon=request.days)
+    metrics = model.get_q_metrics(preds)
+    return {"previsoes": preds.tolist(), "metricas": metrics}
