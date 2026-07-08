@@ -4,6 +4,8 @@ import logging
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from app.model_inference import ModelInference
+from app.metrics import calculate_metrics, calculate_seasonal_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +254,107 @@ class DataPipeline:
         full_input = np.hstack([scaled, month_sin])  # (n_steps, 10)
 
         return np.expand_dims(full_input, axis=0)  # (1, n_steps, 10)
+
+    def update_metrics(self, model_path="models/modelo_lstm.keras", max_days=365):
+        import time
+        from app.model_inference import ModelInference
+        from app.metrics import calculate_metrics, calculate_seasonal_metrics
+
+        self.logger.info("🚀 Iniciando cálculo de métricas...")
+        start_time = time.time()
+
+        # 1. Carregar dados
+        self.logger.info("📂 Carregando dados...")
+        df = self.get_latest_data()
+        n = len(df)
+        self.logger.info(f"✅ Dados carregados: {n} dias")
+
+        # 2. Selecionar período de teste (últimos `max_days` dias)
+        if max_days > n:
+            max_days = n
+        test_df = df.iloc[-max_days:].copy()
+        self.logger.info(f"📊 Período de teste: {len(test_df)} dias")
+
+        if len(test_df) < 30:
+            raise ValueError(f"Conjunto de teste muito pequeno: {len(test_df)} dias")
+
+        # 3. Carregar modelo
+        self.logger.info("🧠 Carregando modelo LSTM...")
+        model = ModelInference(model_path, self.scaler_file)
+        self.logger.info("✅ Modelo carregado")
+
+        # 4. Previsão passo a passo
+        n_steps = 30
+        obs = test_df.iloc[:, -1].values
+        sim = []
+
+        self.logger.info(f"🔮 Iniciando previsão para {len(test_df)} dias...")
+
+        # Sequência inicial
+        inicio_teste = n - max_days
+        df_inicial = df.iloc[inicio_teste - n_steps : inicio_teste]
+        seq = self.prepare_input_sequence(df_inicial, n_steps=n_steps)
+
+        total = len(test_df)
+        last_log = time.time()
+
+        for i in range(total):
+            # Prever próximo dia
+            pred_val = model.predict(seq, horizon=1)[0]
+            sim.append(pred_val)
+
+            # Log a cada 50 dias
+            if i % 50 == 0:
+                elapsed = time.time() - last_log
+                self.logger.info(f"   ⏳ Progresso: {i}/{total} dias ({i/total*100:.1f}%) - {elapsed:.2f}s desde último log")
+                last_log = time.time()
+
+            # Atualizar sequência (usando dados reais)
+            if i < total - 1:
+                next_day = test_df.iloc[i+1:i+2].copy()
+                next_scaled = self.scaler.transform(np.log1p(next_day))
+                next_sin = np.sin(2 * np.pi * next_day.index.month / 12).values.reshape(-1, 1)
+                next_full = np.hstack([next_scaled, next_sin])
+                seq = np.expand_dims(next_full, axis=0)
+
+        sim = np.array(sim)
+        obs = obs[:len(sim)]
+        self.logger.info(f"✅ Previsão concluída em {time.time() - start_time:.2f}s")
+
+        # 5. Calcular métricas
+        self.logger.info("📊 Calculando métricas...")
+        metrics = calculate_metrics(obs, sim)
+
+        global_metrics = {
+            'nse': round(metrics['NSE'], 4),
+            'pbias': round(metrics['PBIAS'], 2),
+            'rmse': round(metrics['RMSE'], 2),
+            'nse_log': round(metrics['NSElog'], 4),
+            'nse_seca': round(metrics['NSE_Seca'], 4),
+            'q90_obs': round(metrics['Q90_Obs'], 2),
+            'q90_sim': round(metrics['Q90_Sim'], 2),
+            'err_q90': round(metrics['ErrQ90'], 2),
+            'q95_obs': round(metrics['Q95_Obs'], 2),
+            'q95_sim': round(metrics['Q95_Sim'], 2),
+            'err_q95': round(metrics['ErrQ95'], 2),
+            'n_obs': len(obs)
+        }
+
+        dates = test_df.index[:len(sim)]
+        seasonal = calculate_seasonal_metrics(obs, sim, dates)
+        seasonal_metrics = {
+            season: {'NSE': round(v['NSE'], 4), 'NSElog': round(v['NSElog'], 4)}
+            for season, v in seasonal.items()
+        }
+
+        total_time = time.time() - start_time
+        self.logger.info(f"🎉 Métricas calculadas em {total_time:.2f}s")
+        return {
+            'global': global_metrics,
+            'seasonal': seasonal_metrics,
+            'data_calculo': pd.Timestamp.now().isoformat(),
+            'tempo_calculo': round(total_time, 2)
+        }
 
     def run_etl(self):
         """Força a execução do ETL e retreina o scaler."""

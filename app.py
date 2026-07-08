@@ -1,89 +1,80 @@
 import streamlit as st
 import pandas as pd
-import json
 import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
-from sklearn.preprocessing import StandardScaler
 from app.etl_pipeline import DataPipeline
 from app.model_inference import ModelInference
+from app.config import get_pipeline_config, is_production
 
-# --- Configuração da Página ---
 st.set_page_config(page_title="Gestão de Vazões - Rio Aquidauana", layout="wide")
-st.cache_resource.clear()
-# --- Funções de Cache (Performance) ---
+
+if not is_production():
+    st.cache_resource.clear()
+
 @st.cache_resource
 def get_pipeline():
-    config = {
-        "drive_path": "data/raw",
-        "output_dir": "data/processed",
-        "output_file": "final_dataset_ANA_regressao.csv",
-        "diagnostic_file": "preenchimento_diagnostico.csv",
-        "scaler_file": "data/scaler.pkl",
-        "start_date": "1994-02-01",
-        "end_date": "2024-01-31",
-        "max_missing_pct": 15.0,
-        "min_common_pairs": 30,
-        "train_frac": 0.70,
-        "stations": [
-            {"file": "1954002_Chuvas.csv", "name": "Precipitacao_1954002", "type": "Chuva"},
-            {"file": "2054019_Chuvas.csv", "name": "Precipitacao_2054019", "type": "Chuva"},
-            {"file": "66926000_Vazoes.csv", "name": "Vazao_66926000", "type": "Vazao"},
-            {"file": "2054005_Chuvas.csv", "name": "Precipitacao_2054005", "type": "Chuva"},
-            {"file": "2054009_Chuvas.csv", "name": "Precipitacao_2054009", "type": "Chuva"},
-            {"file": "2055003_Chuvas.csv", "name": "Precipitacao_2055003", "type": "Chuva"},
-            {"file": "66941000_Vazoes.csv", "name": "Vazao_66941000", "type": "Vazao"},
-            {"file": "2055002_Chuvas.csv", "name": "Precipitacao_2055002", "type": "Chuva"},
-            {"file": "66945000_Vazoes.csv", "name": "Vazao_66945000", "type": "Vazao"}
-        ],
-        "desired_order": [
-            "Precipitacao_1954002", "Precipitacao_2054019", "Vazao_66926000",
-            "Precipitacao_2054005", "Precipitacao_2054009", "Precipitacao_2055003",
-            "Vazao_66941000", "Precipitacao_2055002", "Vazao_66945000"
-        ]
-    }
-    return DataPipeline(config=config)
+    return DataPipeline(config=get_pipeline_config())
 
 @st.cache_resource
 def get_model():
-    config = {
-        "scaler_file": "data/scaler.pkl"
-    }
+    config = get_pipeline_config()
     return ModelInference(
         model_path="models/modelo_lstm.keras",
         scaler_path=config["scaler_file"]
     )
 
-@st.cache_data
-def load_metrics():
-    """Carrega as métricas de desempenho de um arquivo JSON externo."""
-    try:
-        with open('data/metrics.json', 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"global": {"nse": 0.0, "pbias": 0.0, "rmse": 0.0}, "seasonal": {}}
+@st.cache_data(ttl=3600)  # cache por 1 hora
+def get_metrics():
+    """Calcula métricas dinamicamente usando o pipeline e o modelo."""
+    pipeline = get_pipeline()
+    return pipeline.update_metrics(max_days=365)
 
 # --- Páginas ---
 def pagina_monitoramento():
     st.header("Monitoramento de Performance")
-    metrics = load_metrics()
+
+    # Carregar métricas automaticamente (com spinner)
+    with st.spinner("Calculando métricas de desempenho... (pode levar alguns segundos)"):
+        try:
+            metrics = get_metrics()
+            global_m = metrics['global']
+            seasonal = metrics['seasonal']
+        except Exception as e:
+            st.error(f"Erro ao calcular métricas: {e}")
+            st.info("Verifique se o ETL foi executado e o modelo está disponível.")
+            # Mostrar métricas de fallback (opcional)
+            return
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("NSE (Teste)", f"{metrics['global']['nse']:.4f}")
-    col2.metric("PBIAS", f"{metrics['global']['pbias']}%")
-    col3.metric("RMSE", f"{metrics['global']['rmse']}")
+    col1.metric("NSE (Teste)", f"{global_m['nse']:.4f}")
+    col2.metric("PBIAS", f"{global_m['pbias']}%")
+    col3.metric("RMSE", f"{global_m['rmse']} m³/s")
 
     st.subheader("Performance por Período Hidrológico")
-    st.table(pd.DataFrame(metrics.get('seasonal', {})).T)
+    df_seasonal = pd.DataFrame({
+        "Período": list(seasonal.keys()),
+        "NSE": [v['NSE'] for v in seasonal.values()],
+        "NSElog": [v['NSElog'] for v in seasonal.values()]
+    })
+    st.table(df_seasonal)
+
+    st.subheader("Detalhes das Métricas")
+    st.json({
+        "Q90 Observado": global_m['q90_obs'],
+        "Q90 Simulado": global_m['q90_sim'],
+        "Erro Q90": f"{global_m['err_q90']}%",
+        "Q95 Observado": global_m['q95_obs'],
+        "Q95 Simulado": global_m['q95_sim'],
+        "Erro Q95": f"{global_m['err_q95']}%",
+        "NSE Seca": global_m['nse_seca'],
+        "Número de observações": global_m['n_obs']
+    })
 
     st.subheader("Saúde Operacional")
-    media_treino, std_treino = 25.0, 5.0
-    precipitacao_atual = 150
-    if precipitacao_atual > (media_treino + 2 * std_treino):
-        st.warning("⚠️ Alerta: Entrada de precipitação fora da distribuição de treinamento (Drift).")
-    else:
-        st.success("✅ Modelo operando dentro da distribuição esperada.")
-
+    if st.button("Recalcular métricas agora"):
+        st.cache_data.clear()
+        st.rerun()
 
 def pagina_principal(data_inicial, horizon):
     try:
@@ -120,20 +111,23 @@ def pagina_principal(data_inicial, horizon):
 st.sidebar.header("Configurações")
 menu = st.sidebar.radio("Navegação", ["Previsão Principal", "Monitoramento"])
 data_inicial = st.sidebar.date_input("Data de início", datetime.today())
-horizon = st.sidebar.slider("horizon de previsão (dias)", 7, 90, 30)
+horizon = st.sidebar.slider("Horizonte de previsão (dias)", 7, 90, 30)
 
 if st.sidebar.button("Atualizar dados da ANA"):
     with st.spinner('Executando ETL...'):
-        pipeline = get_pipeline()
-        pipeline.run_etl()
-        st.success("Dados atualizados com sucesso!")
+        try:
+            pipeline = get_pipeline()
+            pipeline.run_etl()
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.success("Dados atualizados com sucesso! Recarregue a página.")
+        except Exception as e:
+            st.error(f"Erro ao executar ETL: {e}")
 
-# --- Renderização Condicional ---
 if menu == "Previsão Principal":
     pagina_principal(data_inicial, horizon)
 else:
     pagina_monitoramento()
-
 # --- Rodapé Institucional ---
 st.markdown("---")
 st.markdown("<div style='text-align: center;'><strong>Produto do Projeto de Mestrado em Rede Nacional Profissionalizante em Gestão e Regulação de Recursos Hídricos (PROFAGUA)</strong></div>", unsafe_allow_html=True)
