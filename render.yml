@@ -29,7 +29,7 @@ services:
       - key: ENV
         value: production
       - key: API_URL
-        value: https://api-aquidauana.onrender.com
+        value: https://api-rio-aquidauana.onrender.com
     disk:
       name: data
       mountPath: /data
