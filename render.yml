@@ -1,0 +1,36 @@
+services:
+  # API FastAPI
+  - type: web
+    name: api-aquidauana
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: DATA_RAW_PATH
+        value: /data/raw
+      - key: DATA_PROCESSED_PATH
+        value: /data/processed
+      - key: SCALER_FILE
+        value: /data/scaler.pkl
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+
+  # Frontend Streamlit
+  - type: web
+    name: frontend-aquidauana
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: ENV
+        value: production
+      - key: API_URL
+        value: https://api-aquidauana.onrender.com
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
